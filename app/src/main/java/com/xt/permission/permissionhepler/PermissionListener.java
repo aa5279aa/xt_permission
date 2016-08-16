@@ -5,20 +5,21 @@ package com.xt.permission.permissionhepler;
  */
 public interface PermissionListener {
 
-
     /**
      * DENIED
      */
-    public void onDeniedPermission();
+    public void onDeniedPermission(String[] grantedPermissions, String[] deniedPermissions, int requestId);
+
 
     /**
      * GRANTED
      */
-    public void onGrantedPermission();
+    public void onGrantedPermission(String[] grantedPermissions, int requestId);
+
 
     /**
      * NOSHOW
      */
-    public void onNoShowPermission();
+    public void onNoShowPermission(String[] grantedPermissions, String[] deniedPermissions, String[] noShowPermissions, int requestId);
 
 }

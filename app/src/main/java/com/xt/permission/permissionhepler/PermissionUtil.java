@@ -1,11 +1,16 @@
 package com.xt.permission.permissionhepler;
 
 import android.app.Activity;
+import android.app.Dialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.provider.Settings;
+import android.support.v4.app.ActivityCompat;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -14,44 +19,69 @@ import java.util.List;
 public class PermissionUtil {
 
 
-    public static void showMessage_GotoSetting(final String message, final Activity act) {
+    public static void showGotoSetting(final Dialog dialog, final Activity act) {
         act.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                PermissionSettingDialog.Builder builder = new PermissionSettingDialog.Builder(act);
-                builder.setTitle("权限设置");
-                builder.setMessage(message);
-                builder.setPositiveButton("取消", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface dialog, int which) {
-                        dialog.dismiss();
-                        act.finish();
-                    }
-                });
-
-                builder.setNegativeButton("设置",
-                        new android.content.DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
-                                dialog.dismiss();
-                                act.finish();
-                                gotoPermissionSetting(act);
-                            }
-                        });
-
-                builder.create().show();
+                dialog.show();
             }
         });
+    }
 
+    public static PermissionSettingDialog.Builder createSettingDialog(final Activity act, String titile, String message, DialogInterface.OnClickListener clickListener) {
+        PermissionSettingDialog.Builder builder = new PermissionSettingDialog.Builder(act);
+        builder.setTitle(titile);
+        builder.setMessage(message);
+        builder.setPositiveButton("设置", clickListener);
+        builder.setNegativeButton("取消", clickListener);
+        return builder;
+    }
+
+    public static DialogInterface.OnClickListener getDefaultListener(final Activity act) {
+        return new DialogInterface.OnClickListener() {
+
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                if (which == DialogInterface.BUTTON_POSITIVE) {
+                    dialog.dismiss();
+                    gotoPermissionSetting(act);
+                } else if (which == DialogInterface.BUTTON_NEGATIVE) {
+                    dialog.dismiss();
+                }
+            }
+        };
     }
 
     //对小米的机型不适配，以后改进
-    private static void gotoPermissionSetting(Activity act) {
+    public static void gotoPermissionSetting(Activity act) {
         Uri packageURI = Uri.parse("package:" + act.getPackageName());
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageURI);
         act.startActivity(intent);
     }
 
+    public static List<String> getCannotShowPermissionList(Activity act, List<String> permissions) {
+        List<String> canShowList = new ArrayList<String>();
+        for (String permission : permissions) {
+            final boolean b = ActivityCompat.shouldShowRequestPermissionRationale(act, permission);
+            if (!b) {
+                canShowList.add(permission);
+            }
+        }
+        return canShowList;
+    }
 
-    public static StringBuilder getUnShowPermissionsMessage(List<String> list) {
+    public static ArrayList<String> getUnGrantedPermission(Context context, String... permissions) {
+        ArrayList<String> unAuthorities = new ArrayList<>();
+        for (String permission : permissions) {
+            int hasPermission = context.checkSelfPermission(permission);
+            if (hasPermission != PackageManager.PERMISSION_GRANTED) {
+                unAuthorities.add(permission);
+            }
+        }
+        return unAuthorities;
+    }
+
+    public static StringBuilder getUnShowPermissionsMessage(String[] list) {
         StringBuilder message = new StringBuilder("您已关闭了");
         String permisson;
         boolean hasCALENDAR = false;
@@ -64,8 +94,8 @@ public class PermissionUtil {
         boolean hasSMS = false;
         boolean hasSTORAGE = false;
 
-        if (list.size() == 1) {
-            permisson = list.get(0);
+        if (list.length == 1) {
+            permisson = list[0];
             if (permisson.contains("CALENDAR")) {
                 message.append("日历 ");
             } else if (permisson.contains("CAMERA")) {
@@ -101,8 +131,8 @@ public class PermissionUtil {
 
             }
         } else {
-            for (int i = 0; i < list.size(); i++) {
-                permisson = list.get(i);
+            for (int i = 0; i < list.length; i++) {
+                permisson = list[i];
                 if (permisson.contains("CALENDAR") && hasCALENDAR == false) {
                     message.append("日历");
                     hasCALENDAR = true;
@@ -140,7 +170,7 @@ public class PermissionUtil {
                     message.append("手机存储");
                     hasSTORAGE = true;
                 }
-                if (i < list.size() - 1) {
+                if (i < list.length - 1) {
                     message.append(",");
                 }
             }

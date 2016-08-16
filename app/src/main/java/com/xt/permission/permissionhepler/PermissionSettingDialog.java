@@ -137,7 +137,7 @@ public class PermissionSettingDialog extends Dialog {
                 @Override
                 public void onClick(View v) {
                     negativeButtonClickListener.onClick(dialog,
-                            DialogInterface.BUTTON_POSITIVE);
+                            DialogInterface.BUTTON_NEGATIVE);
                 }
             });
 

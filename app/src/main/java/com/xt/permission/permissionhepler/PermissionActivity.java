@@ -2,6 +2,7 @@ package com.xt.permission.permissionhepler;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -10,11 +11,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
-import android.util.Log;
-import android.widget.Toast;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 
@@ -24,32 +24,128 @@ import java.util.List;
  */
 public class PermissionActivity extends Activity {
     private static Object lock = new Object();
+    private static ArrayList<PermissionRequestSetting> listenerList = new ArrayList<PermissionRequestSetting>();
 
-    public static void startJobWithPermission(Context context, Runnable job, String... permissions) {
-        startJobWithPermission(context, job, null, permissions);
+//    //方式一不关心返回值
+//    public static void startJobWithPermission(Context context, Runnable job, String... permissions) {
+//        startJobWithPermission(context, job, null, -1, permissions);
+//    }
+
+    //方式二只关心回调
+    public static void startJobWithPermission(Context context, PermissionListener listener, int requestCode, String... permissions) {
+        startJobWithPermission(context, listener, requestCode, true, null, permissions);
     }
 
-    public static void startJobWithPermission(Context context, Runnable job, PermissionListener listener, String... permissions) {
+    public static void startJobWithPermission(Context context, PermissionListener listener, int requestCode, boolean showSettingDialog, String... permissions) {
+        startJobWithPermission(context, listener, requestCode, showSettingDialog, null, permissions);
+    }
+
+    public static void startJobWithPermission(Context context, PermissionListener listener, int requestCode, boolean showSettingDialog, Dialog settingDialog, String... permissions) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || permissions == null) {
-            actionForGranted(job, listener);
+            checkResultForGranted(permissions, listener, requestCode);
             return;
         }
-        ArrayList<String> unAuthorities = getUnGrantedPermission(context, permissions);
+        ArrayList<String> unAuthorities = PermissionUtil.getUnGrantedPermission(context, permissions);
         if (unAuthorities.isEmpty()) {
-            actionForGranted(job, listener);
+            checkResultForGranted(permissions, listener, requestCode);
             return;
         }
+
+        //以上的请求不需要加入队列
+        if (listener != null) {
+            PermissionRequestSetting permissionSetting = new PermissionRequestSetting();
+            permissionSetting.requestCode = requestCode;
+            permissionSetting.permissions = permissions;
+            permissionSetting.listener = listener;
+            listenerList.add(permissionSetting);
+        } else {
+//            final Handler handler = new Handler();
+//            JobThread jobThread = JobThread.newInstance(context, job, handler, permissions);
+//            jobThread.start();
+        }
+
         Intent intent = new Intent(context, PermissionActivity.class);
         intent.putStringArrayListExtra("permissions", unAuthorities);
+        intent.putExtra("requestCode", requestCode);
         if (!(context instanceof Activity)) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         }
         context.startActivity(intent);
-        final Handler handler = new Handler();
-        JobThread jobThread = JobThread.newInstance(context, job, handler, permissions);
-        jobThread.start();
     }
 
+    private static void checkResultForGranted(String[] permissions, PermissionListener listener, int requestCode) {
+        if (listener != null) {
+            listener.onGrantedPermission(permissions, requestCode);
+        }
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        ArrayList<String> permissions = getIntent().getStringArrayListExtra("permissions");
+        int requestCode = getIntent().getExtras().getInt("requestCode");
+        String[] permissionArr = new String[permissions.size()];
+        permissions.toArray(permissionArr);
+        if (!(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)) {
+            finish();
+        }
+        //this only requst and don't care whether first requst
+        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, requestCode);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        List<String> deniedPermissions = new ArrayList<String>();
+        List<String> grantedPermissions = new ArrayList<String>();
+        //因为requestCode可能存在重复，重复的申请permissions不一样，所以这里不使用grantResults
+        final Iterator<PermissionRequestSetting> iterator = listenerList.iterator();
+        while (iterator.hasNext()) {
+            final PermissionRequestSetting next = iterator.next();
+            if (next.requestCode != requestCode) {
+                continue;
+            }
+            //remove listener setting
+            iterator.remove();
+            deniedPermissions.clear();
+            grantedPermissions.clear();
+            final PermissionListener listener = next.listener;
+            for (String permission : next.permissions) {
+                //这里不需要再次验证的
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+                    grantedPermissions.add(permission);
+                } else {
+                    deniedPermissions.add(permission);
+                }
+            }
+            //回调
+            if (deniedPermissions.size() == 0) {
+                listener.onGrantedPermission(grantedPermissions.toArray(permissions), requestCode);
+                continue;
+            }
+            final List<String> cannotShowPermissionList = PermissionUtil.getCannotShowPermissionList(this, deniedPermissions);
+            if (cannotShowPermissionList.size() == 0) {
+                //user select no but don't select not asking
+                listener.onDeniedPermission(grantedPermissions.toArray(permissions), deniedPermissions.toArray(permissions), requestCode);
+            } else {
+                listener.onNoShowPermission(grantedPermissions.toArray(permissions), deniedPermissions.toArray(permissions), cannotShowPermissionList.toArray(permissions), requestCode);
+            }
+        }
+        finish();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+    }
+
+    static class PermissionRequestSetting {
+        PermissionListener listener;
+        String[] permissions;
+        int requestCode;
+    }
+
+
+    //in first version,don't use this class
     private static class JobThread extends Thread {
         WeakReference<Context> weak;
         Runnable job;
@@ -73,7 +169,7 @@ public class PermissionActivity extends Activity {
                     if (context == null) {
                         return;
                     }
-                    List<String> unAuthorities = getUnGrantedPermission(context, permissions);
+                    List<String> unAuthorities = PermissionUtil.getUnGrantedPermission(context, permissions);
                     if (unAuthorities.isEmpty()) {
                         handler.post(job);
                     }
@@ -81,101 +177,6 @@ public class PermissionActivity extends Activity {
                     e.printStackTrace();
                 }
             }
-        }
-    }
-
-    private static ArrayList<String> getUnGrantedPermission(Context context, String... permissions) {
-        ArrayList<String> unAuthorities = new ArrayList<>();
-        for (String permission : permissions) {
-            int hasPermission = context.checkSelfPermission(permission);
-            if (hasPermission != PackageManager.PERMISSION_GRANTED) {
-                unAuthorities.add(permission);
-            }
-        }
-        return unAuthorities;
-    }
-
-    private static void actionForGranted(Runnable job, PermissionListener listener) {
-        if (job != null) {
-            job.run();
-        }
-        if (listener != null) {
-            listener.onGrantedPermission();
-        }
-    }
-
-    private static void actionForDenied() {
-
-    }
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        ArrayList<String> permissions = getIntent().getStringArrayListExtra("permissions");
-        String[] permissionArr = new String[permissions.size()];
-        permissions.toArray(permissionArr);
-        if (!(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)) {
-            Log.i("LXL", "Error");
-            finish();
-        }
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-        //this only requst and don't care whether first requst
-        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 11);
-    }
-
-    private List<String> getCannotShowPermissionList(String[] permissions) {
-        List<String> list = new ArrayList<String>();
-        for (String permission : permissions) {
-            final boolean b = ActivityCompat.shouldShowRequestPermissionRationale(this, permission);
-            if (!b) {
-                list.add(permission);
-            }
-        }
-        return list;
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (grantResults.length == 0) {
-            return;
-        }
-
-        if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            finish();
-            synchronized (lock) {
-                lock.notify();
-            }
-        } else if (grantResults[0] == PackageManager.PERMISSION_DENIED) {
-            final List<String> cannotShowPermissionList = getCannotShowPermissionList(permissions);
-            if (cannotShowPermissionList.size() == 0) {
-                //user select no but don't select not asking
-                actionForDenied();
-                Toast.makeText(this, "用户拒绝了权限申请", Toast.LENGTH_LONG).show();
-            } else {
-                //user select no and select not asking
-                final StringBuilder unShowPermissionsMessage = PermissionUtil.getUnShowPermissionsMessage(cannotShowPermissionList);
-                PermissionUtil.showMessage_GotoSetting(unShowPermissionsMessage.toString(), this);
-            }
-        }
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        finish();
-        synchronized (lock) {
-            lock.notify();
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        synchronized (lock) {
-            lock.notify();
         }
     }
 }
